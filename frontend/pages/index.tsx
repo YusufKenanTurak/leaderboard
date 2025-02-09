@@ -12,42 +12,34 @@ type Player = {
   name: string;
   country: string;
   money: number;
-  rank: number | null; 
+  rank: number | null;
 };
+
 type AutoCompleteItem = {
   id: number;
   name: string;
 };
 
-/** Tek endpoint, group=1 => her ülkenin top 10 */
+// fetchLeaderboard => ?playerId=..., ?group=1 => normal or grouped
 async function fetchLeaderboard(playerId?: string, group?: boolean): Promise<Player[]> {
   let url = 'http://localhost:5000/api/leaderboard';
   const params = new URLSearchParams();
-  if (playerId) {
-    params.set('playerId', playerId);
-  }
-  if (group) {
-    params.set('group', '1');  // ?group=1 
-  }
+  if (playerId) params.set('playerId', playerId);
+  if (group) params.set('group', '1');
   const queryString = params.toString();
-  if (queryString) {
-    url += `?${queryString}`;
-  }
+  if (queryString) url += `?${queryString}`;
 
   const res = await fetch(url);
-  if (!res.ok) {
-    return [];
-  }
+  if (!res.ok) return [];
   return res.json();
 }
 
-async function fetchAutocomplete(q: string): Promise<AutoCompleteItem[]> {
-  if (!q) return [];
-  const url = `http://localhost:5000/api/players/autocomplete?q=${encodeURIComponent(q)}`;
+// fetchAutocomplete => /players/autocomplete?q=...
+async function fetchAutocomplete(query: string): Promise<AutoCompleteItem[]> {
+  if (!query) return [];
+  const url = `http://localhost:5000/api/players/autocomplete?q=${encodeURIComponent(query)}`;
   const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error('Autocomplete error');
-  }
+  if (!res.ok) throw new Error('Autocomplete error');
   return res.json();
 }
 
@@ -58,11 +50,11 @@ export default function HomePage() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isGrouped, setIsGrouped] = useState(false);
 
+  // highlight & rank
   const [foundRank, setFoundRank] = useState<number | null>(null);
   const [highlightedPlayerId, setHighlightedPlayerId] = useState<number | null>(null);
 
-  // useQuery => key: ['leaderboard', searchId, isGrouped]
-  // => fetchLeaderboard(searchId, isGrouped)
+  // useQuery => call fetchLeaderboard
   const { data, isLoading, error, refetch } = useQuery(
     ['leaderboard', searchId, isGrouped],
     () => fetchLeaderboard(searchId, isGrouped),
@@ -84,26 +76,31 @@ export default function HomePage() {
           setShowSuggestions(true);
         }
       })
-      .catch((err) => console.error('Autocomplete fetch error:', err));
+      .catch((err) => console.error('autocomplete error:', err));
+
     return () => { active = false; };
   }, [searchTerm]);
 
+  // Suggestion seçilince
   function handleSelectSuggestion(item: AutoCompleteItem) {
     setSearchTerm(item.name);
     setSearchId(String(item.id));
     setShowSuggestions(false);
   }
 
+  // Search butonu
   async function handleSearch(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setFoundRank(null);
     setHighlightedPlayerId(null);
 
     if (!searchId) {
+      // Numeric ID mi?
       if (/^\d+$/.test(searchTerm)) {
         setSearchId(searchTerm);
         refetch();
       } else {
+        // Name => fetchAutocomplete
         const auto = await fetchAutocomplete(searchTerm);
         if (auto.length > 0) {
           setSearchId(String(auto[0].id));
@@ -115,6 +112,7 @@ export default function HomePage() {
     refetch();
   }
 
+  // Clear
   function handleClear() {
     setSearchTerm('');
     setSearchId('');
@@ -125,11 +123,12 @@ export default function HomePage() {
     refetch();
   }
 
-  // data geldikten sonra highlight logic
+  // data değişince highlight
   useEffect(() => {
     if (!data || data.length === 0) return;
     const pid = Number(searchId);
     if (!pid) return;
+
     const found = data.find((p) => p.id === pid);
     if (found) {
       setFoundRank(found.rank);
@@ -142,7 +141,7 @@ export default function HomePage() {
     }
   }, [data, searchId]);
 
-  // Render 
+  // Render
   if (isLoading) return <Message>Loading...</Message>;
   if (error) return <Message>{(error as Error).message}</Message>;
 
@@ -150,11 +149,7 @@ export default function HomePage() {
     return (
       <MainContainer>
         <HeaderArea>
-          <Logo
-            href="https://www.panteon.games/tr/"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
+          <Logo href="https://www.panteon.games/tr/" target="_blank" rel="noopener noreferrer">
             <Image src="/logo.png" alt="PANTEON" width={150} height={60} />
           </Logo>
           <LeaderboardTitle>Leaderboard</LeaderboardTitle>
@@ -174,10 +169,7 @@ export default function HomePage() {
             {showSuggestions && suggestions.length > 0 && (
               <SuggestionList>
                 {suggestions.map((item) => (
-                  <SuggestionItem 
-                    key={item.id}
-                    onClick={() => handleSelectSuggestion(item)}
-                  >
+                  <SuggestionItem key={item.id} onClick={() => handleSelectSuggestion(item)}>
                     {item.name} (ID: {item.id})
                   </SuggestionItem>
                 ))}
@@ -196,13 +188,11 @@ export default function HomePage() {
     );
   }
 
+  // rank info
   const rankMessage = foundRank ? `${searchTerm}'s rank #${foundRank}` : '';
 
-  // GROUP BY => data her ülkeye top 10
+  // “Group by Country” mod => her ülke top10
   if (isGrouped) {
-    // data zaten "her ülke top10" şeklinde geliyor 
-    // rank => 1..10
-    // Yine de front-end’de grouping ile country altına koyuyoruz
     const byCountry: Record<string, Player[]> = {};
     data.forEach((p) => {
       const c = p.country || 'Unknown';
@@ -213,11 +203,7 @@ export default function HomePage() {
     return (
       <MainContainer>
         <HeaderArea>
-          <Logo
-            href="https://www.panteon.games/tr/"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
+          <Logo href="https://www.panteon.games/tr/" target="_blank" rel="noopener noreferrer">
             <Image src="/logo.png" alt="PANTEON" width={150} height={60} />
           </Logo>
           <LeaderboardTitle>Leaderboard (Top 10 each Country)</LeaderboardTitle>
@@ -237,10 +223,7 @@ export default function HomePage() {
             {showSuggestions && suggestions.length > 0 && (
               <SuggestionList>
                 {suggestions.map((item) => (
-                  <SuggestionItem 
-                    key={item.id}
-                    onClick={() => handleSelectSuggestion(item)}
-                  >
+                  <SuggestionItem key={item.id} onClick={() => handleSelectSuggestion(item)}>
                     {item.name} (ID: {item.id})
                   </SuggestionItem>
                 ))}
@@ -249,9 +232,7 @@ export default function HomePage() {
           </SearchContainer>
           <Button type="submit">Search</Button>
           <Button type="button" onClick={handleClear}>Clear</Button>
-          <Button type="button" onClick={() => setIsGrouped(false)}>
-            Ungroup
-          </Button>
+          <Button type="button" onClick={() => setIsGrouped(false)}>Ungroup</Button>
         </SearchForm>
 
         {rankMessage && <RankInfo>{rankMessage}</RankInfo>}
@@ -275,11 +256,7 @@ export default function HomePage() {
   return (
     <MainContainer>
       <HeaderArea>
-        <Logo
-          href="https://www.panteon.games/tr/"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
+        <Logo href="https://www.panteon.games/tr/" target="_blank" rel="noopener noreferrer">
           <Image src="/logo.png" alt="PANTEON" width={150} height={60} />
         </Logo>
         <LeaderboardTitle>Leaderboard</LeaderboardTitle>
@@ -299,10 +276,7 @@ export default function HomePage() {
           {showSuggestions && suggestions.length > 0 && (
             <SuggestionList>
               {suggestions.map((item) => (
-                <SuggestionItem
-                  key={item.id}
-                  onClick={() => handleSelectSuggestion(item)}
-                >
+                <SuggestionItem key={item.id} onClick={() => handleSelectSuggestion(item)}>
                   {item.name} (ID: {item.id})
                 </SuggestionItem>
               ))}
@@ -311,9 +285,7 @@ export default function HomePage() {
         </SearchContainer>
         <Button type="submit">Search</Button>
         <Button type="button" onClick={handleClear}>Clear</Button>
-        <Button type="button" onClick={() => setIsGrouped(true)}>
-          Group by Country
-        </Button>
+        <Button type="button" onClick={() => setIsGrouped(true)}>Group by Country</Button>
       </SearchForm>
 
       {rankMessage && <RankInfo>{rankMessage}</RankInfo>}
