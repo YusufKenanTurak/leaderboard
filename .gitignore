@@ -1,1 +1,5 @@
 backend/node_modules/.bin/acorn.ps1
+backend/node_modules/
+frontend/.next/
+frontend/node_modules/
+node_modules/
