@@ -13,17 +13,21 @@ const port = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// ===================== PostgreSQL & Redis =====================
+// ===================================================================
+// PostgreSQL & Redis Bağlantısı
+// ===================================================================
 const db = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://admin:admin@localhost:5432/leaderboard'
+  connectionString: process.env.DATABASE_URL || 'postgresql://admin:admin@db:5432/leaderboard'
 });
-const redis = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379');
+const redis = new Redis(process.env.REDIS_URL || 'redis://redis:6379');
 
-// ====================== Tipler ======================
+// ===================================================================
+// Tipler
+// ===================================================================
 interface PlayerRow {
   id: number;
-  name: string;
-  country_id: number;
+  name?: string; // DB sorgularına göre opsiyonel
+  country_id?: number;
   money: number;
 }
 interface PlayerJoined {
@@ -37,18 +41,24 @@ interface LeaderboardEntry {
   score: number;
 }
 
-// ===================== Hata Yakalama (Async) =====================
+// ===================================================================
+// Hata Yakalama (Async Handler)
+// ===================================================================
 const asyncHandler = (
-  fn: (req: Request, res: Response, next: NextFunction) => Promise<any>
+  fn: (req:Request,res:Response,next:NextFunction)=>Promise<any>
 ): RequestHandler => {
   return (req, res, next) => fn(req, res, next).catch(next);
 };
 
-// ============= Global Concurrency Lock =============
+// ===================================================================
+// Concurrency Lock
+// ===================================================================
 let isProcessing = false;
 
-// ===================== ensureSchemaExists =====================
-async function ensureSchemaExists(): Promise<void> {
+// ===================================================================
+// Tablolar ve pg_trgm index
+// ===================================================================
+async function ensureSchemaExists() {
   await db.query(`
     CREATE TABLE IF NOT EXISTS public.countries (
       id SERIAL PRIMARY KEY,
@@ -64,28 +74,38 @@ async function ensureSchemaExists(): Promise<void> {
       FOREIGN KEY (country_id) REFERENCES public.countries(id)
     );
   `);
-  console.log('Schema ensured. Checking pg_trgm...');
+  console.log('Schema ensured. Now check pg_trgm extension + index...');
 
   await db.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm;`);
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_players_name_trgm
     ON public.players USING gin (name gin_trgm_ops);
   `);
-
-  console.log('pg_trgm + index ensured.');
+  console.log('pg_trgm extension + trigram index ensured.');
 }
 
-// ===================== initializeLeaderboard =====================
+// ===================================================================
+// 1) initializeLeaderboard (FULL LOAD)
+// ===================================================================
+/**
+ * Tüm players tablosunu (money) Redis'e yükler.
+ * "Dinamik paged + chunk + setImmediate" => 10+ milyon'da "RangeError" önleme
+ */
 async function initializeLeaderboard(): Promise<void> {
   if (isProcessing) {
-    console.log('[initializeLeaderboard] Another process is running, skip...');
+    console.log('[INIT] skip => concurrency lock');
     return;
   }
   isProcessing = true;
+
   try {
-    console.log('[INIT] Start dynamic paged+chunk from players DB...');
+    console.log('[INIT] Start full load...');
     await ensureSchemaExists();
+
+    // Leaderboard sıfırla
     await redis.del('leaderboard');
+    // "sync_offset" vb. de sıfırlayabilirsiniz
+    await redis.set('leaderboard:sync_offset','0');
 
     let pageSizeDB = 100_000;
     let chunkSizeRedis = 10_000;
@@ -95,26 +115,26 @@ async function initializeLeaderboard(): Promise<void> {
     let pageIndex = 0;
 
     while (true) {
-      let rows: { id: number; money: number }[] = [];
+      let rows: Array<{id:number; money:number}> = [];
       try {
-        const { rows: dbRows } = await db.query<{ id: number; money: number }>(`
+        const { rows: dbRows } = await db.query<{ id:number; money:number }>(`
           SELECT id, money
           FROM public.players
           ORDER BY id ASC
           LIMIT $1 OFFSET $2
-        `, [pageSizeDB, offset]);
+        `,[pageSizeDB, offset]);
         rows = dbRows;
       } catch (err) {
-        console.error(`[INIT] DB error pageSizeDB=${pageSizeDB}`, err);
-        pageSizeDB = Math.floor(pageSizeDB / 2);
-        if (pageSizeDB < 1000) {
-          console.error('[INIT] pageSizeDB < 1000 => abort');
+        console.error(`[INIT] DB error, pageSizeDB=${pageSizeDB}`, err);
+        pageSizeDB = Math.floor(pageSizeDB/2);
+        if (pageSizeDB<1000) {
+          console.error('[INIT] pageSizeDB < 1000 => ABORT');
           throw err;
         }
         continue;
       }
 
-      if (rows.length === 0) {
+      if (rows.length===0) {
         console.log('[INIT] no more players => done.');
         break;
       }
@@ -122,323 +142,326 @@ async function initializeLeaderboard(): Promise<void> {
       pageIndex++;
       console.log(`[INIT] page #${pageIndex}: read=${rows.length}, offset=${offset}`);
 
-      let i = 0;
-      while (i < rows.length) {
+      // CHUNK + setImmediate
+      let i=0;
+      while (i<rows.length) {
         const remain = rows.length - i;
-        if (remain < chunkSizeRedis) chunkSizeRedis = remain;
+        if (remain<chunkSizeRedis) chunkSizeRedis=remain;
 
-        let success = false;
+        let success=false;
         while (!success) {
           try {
-            const slice = rows.slice(i, i + chunkSizeRedis);
+            const slice = rows.slice(i,i+chunkSizeRedis);
             const pipeline = redis.pipeline();
-            for (const p of slice) {
-              pipeline.zadd('leaderboard', p.money, p.id.toString());
+            for (const r of slice) {
+              pipeline.zadd('leaderboard', r.money, r.id.toString());
             }
             await pipeline.exec();
 
-            success = true;
-            i += slice.length;
-            totalProcessed += slice.length;
+            success=true;
+            i+=slice.length;
+            totalProcessed+=slice.length;
 
-            await new Promise((r) => setImmediate(r));
-
-          } catch (e: any) {
+            await new Promise(res=>setImmediate(res));
+          } catch(e:any) {
             if (e instanceof RangeError) {
-              console.warn(`[INIT] RangeError chunkSizeRedis=${chunkSizeRedis}, halving...`);
-              chunkSizeRedis = Math.floor(chunkSizeRedis / 2);
-              if (chunkSizeRedis < 1000) {
-                console.error('[INIT] chunkSizeRedis < 1000 => abort');
-                throw e;
-              }
+              console.warn(`[INIT] RangeError => chunkSizeRedis=${chunkSizeRedis}/2`);
+              chunkSizeRedis=Math.floor(chunkSizeRedis/2);
+              if (chunkSizeRedis<1000) throw e;
             } else {
-              console.error('[INIT] Non-RangeError => abort', e);
+              console.error('[INIT] Non-rangeError => abort', e);
               throw e;
             }
           }
         }
       }
+
       offset += rows.length;
+      // sayfa bitince
+      await new Promise(res=>setImmediate(res));
 
-      // sayfa bitiş
-      await new Promise((r) => setImmediate(r));
-
-      pageSizeDB = Math.min(pageSizeDB * 2, 1_000_000);
-      chunkSizeRedis = Math.min(chunkSizeRedis * 2, 50_000);
+      // pageSize & chunkSize adapt
+      pageSizeDB=Math.min(pageSizeDB*2,1_000_000);
+      chunkSizeRedis=Math.min(chunkSizeRedis*2,50_000);
       console.log(`[INIT] done page #${pageIndex}, totalProcessed=${totalProcessed}, pageSizeDB=${pageSizeDB}, chunkSizeRedis=${chunkSizeRedis}`);
     }
 
-    const { rows: maxRow } = await db.query<{ maxid: number }>(`
+    // last_known_id = max
+    const { rows: maxRow } = await db.query<{ maxid:number }>(`
       SELECT COALESCE(MAX(id),0) as maxid FROM public.players
     `);
     const maxId = maxRow[0].maxid;
-    await redis.set('leaderboard:last_known_id', String(maxId));
+    await redis.set('leaderboard:last_known_id', maxId.toString());
+
     console.log(`[INIT] complete => totalProcessed=${totalProcessed}, last_known_id=${maxId}`);
 
   } finally {
-    isProcessing = false;
+    isProcessing=false;
   }
 }
 
-// ===================== syncNewPlayersToLeaderboard =====================
-async function syncNewPlayersToLeaderboard() {
+// ===================================================================
+// 2) Yarı-Parçalı Delta Sync (Daha Hızlı)
+// ===================================================================
+/**
+ * Cron => her 10 saniyede (örnek) tetiklenir
+ * Her tetiklemede, "BİRKAÇ" sayfa (ör. 5 sayfa) işliyoruz.
+ * Her sayfa bitince setImmediate => stack reset
+ */
+cron.schedule('*/10 * * * * *', async () => {
   if (isProcessing) {
-    console.log('[SYNC] Another process is running, skip...');
+    console.log('[cron delta] skip => concurrency in progress');
     return;
   }
-  isProcessing = true;
+  isProcessing=true;
   try {
-    const lastKnownId = await redis.get('leaderboard:last_known_id');
-    let lk = lastKnownId ? parseInt(lastKnownId, 10) : 0;
-    console.log(`[SYNC] start => last_known_id=${lk}`);
-
-    let pageSizeDB = 100_000;
-    let chunkSizeRedis = 10_000;
-
-    let offset = 0;
-    let totalSynced = 0;
-    let pageIndex = 0;
-
-    while (true) {
-      let rows: { id: number; money: number }[] = [];
-      try {
-        const { rows: dbRows } = await db.query<{ id: number; money: number }>(`
-          SELECT id, money
-          FROM public.players
-          WHERE id > $1
-          ORDER BY id ASC
-          LIMIT $2 OFFSET $3
-        `, [lk, pageSizeDB, offset]);
-        rows = dbRows;
-      } catch (err) {
-        console.error(`[SYNC] DB error (pageSizeDB=${pageSizeDB})`, err);
-        pageSizeDB = Math.floor(pageSizeDB / 2);
-        if (pageSizeDB < 1000) {
-          console.error('[SYNC] pageSizeDB < 1000 => abort sync');
-          throw err;
-        }
-        continue;
-      }
-
-      if (rows.length === 0) {
-        console.log('[SYNC] no more new players => done');
+    // Mesela 5 sayfa arka arkaya senkron
+    for (let j=0; j<5; j++) {
+      const done = await syncOnePageOfNewPlayers();
+      if (done) {
+        // tablo bitti => dur
         break;
       }
+    }
+  } catch(e) {
+    console.error('[cron delta] error', e);
+  } finally {
+    isProcessing=false;
+  }
+});
 
-      pageIndex++;
-      offset += rows.length;
-      console.log(`[SYNC] page #${pageIndex}: read=${rows.length}, offset=${offset}`);
+/**
+ * Bir sayfalık "yeni" veriyi senkronize eder (delta).
+ * Geriye "true" dönerse tablo bitti demek.
+ */
+async function syncOnePageOfNewPlayers(): Promise<boolean> {
+  await ensureSchemaExists();
 
-      let i = 0;
-      while (i < rows.length) {
-        const remain = rows.length - i;
-        if (remain < chunkSizeRedis) chunkSizeRedis = remain;
+  const lastKnownIdStr = await redis.get('leaderboard:last_known_id');
+  let lastKnownId = lastKnownIdStr ? parseInt(lastKnownIdStr,10) : 0;
 
-        let success = false;
-        while (!success) {
-          try {
-            const slice = rows.slice(i, i + chunkSizeRedis);
-            const pipeline = redis.pipeline();
-            for (const p of slice) {
-              pipeline.zadd('leaderboard', p.money, p.id.toString());
-            }
-            await pipeline.exec();
+  const syncOffsetStr = await redis.get('leaderboard:sync_offset');
+  let syncOffset = syncOffsetStr ? parseInt(syncOffsetStr,10) : 0;
 
-            success = true;
-            i += slice.length;
-            totalSynced += slice.length;
+  // Tek sayfa boyutu
+  const PAGE_SIZE_DB = 100_000;
+  let chunkSizeRedis=10_000;
 
-            await new Promise((r) => setImmediate(r));
+  console.log(`[deltaOnePage] lastKnownId=${lastKnownId}, offset=${syncOffset}, pageSize=${PAGE_SIZE_DB}`);
 
-          } catch (e: any) {
-            if (e instanceof RangeError) {
-              console.warn(`[SYNC] RangeError chunkSizeRedis=${chunkSizeRedis}, halving...`);
-              chunkSizeRedis = Math.floor(chunkSizeRedis / 2);
-              if (chunkSizeRedis < 1000) {
-                console.error('[SYNC] chunkSizeRedis < 1000 => abort sync');
-                throw e;
-              }
-            } else {
-              console.error('[SYNC] Non-RangeError => abort sync', e);
-              throw e;
-            }
-          }
+  const { rows } = await db.query<PlayerRow>(`
+    SELECT id, money
+    FROM public.players
+    WHERE id > $1
+    ORDER BY id ASC
+    LIMIT $2 OFFSET $3
+  `,[lastKnownId, PAGE_SIZE_DB, syncOffset]);
+
+  if (rows.length===0) {
+    console.log('[deltaOnePage] No more new players => reset offset=0');
+    await redis.set('leaderboard:sync_offset','0');
+    return true; // Bitti
+  }
+
+  let i=0;
+  while (i<rows.length) {
+    const remain=rows.length - i;
+    if (remain<chunkSizeRedis) chunkSizeRedis=remain;
+
+    let success=false;
+    while (!success) {
+      try {
+        const slice = rows.slice(i,i+chunkSizeRedis);
+        const pipeline = redis.pipeline();
+        for (const r of slice) {
+          pipeline.zadd('leaderboard', r.money, r.id.toString());
+        }
+        await pipeline.exec();
+
+        success=true;
+        i+=slice.length;
+
+        // Her chunk => stack reset
+        await new Promise(res=>setImmediate(res));
+      } catch(e:any) {
+        if (e instanceof RangeError) {
+          chunkSizeRedis=Math.floor(chunkSizeRedis/2);
+          if (chunkSizeRedis<1000) throw e;
+        } else {
+          throw e;
         }
       }
-
-      // sayfa bitimi
-      await new Promise((r) => setImmediate(r));
-
-      const localMax = Math.max(...rows.map(r => r.id));
-      if (localMax > lk) lk = localMax;
-
-      pageSizeDB = Math.min(pageSizeDB * 2, 1_000_000);
-      chunkSizeRedis = Math.min(chunkSizeRedis * 2, 50_000);
-      console.log(`[SYNC] done page #${pageIndex}, totalSynced=${totalSynced}, pageSizeDB=${pageSizeDB}, chunkSizeRedis=${chunkSizeRedis}`);
     }
-
-    if (totalSynced > 0) {
-      await redis.set('leaderboard:last_known_id', String(lk));
-      console.log(`[SYNC] done => last_known_id=${lk}, totalSynced=${totalSynced}`);
-    } else {
-      console.log(`[SYNC] no new data => last_known_id remains=${lk}`);
-    }
-
-  } finally {
-    isProcessing = false;
   }
+
+  const newOffset = syncOffset+rows.length;
+  await redis.set('leaderboard:sync_offset', newOffset.toString());
+  console.log(`[deltaOnePage] processed ${rows.length} => new sync_offset=${newOffset}`);
+  return false;
 }
 
-// ===================== Endpoint'ler =====================
-
-app.get('/api/leaderboard', asyncHandler(async (req, res) => {
-  if (req.query.group === '1') {
-    // Her ülkenin top10
-    const sql = `
-      SELECT sub.id, sub.name, sub.country, sub.money, sub.rownum as rank
+// ===================================================================
+// 3) Leaderboard Endpoint
+// ===================================================================
+app.get('/api/leaderboard', asyncHandler(async(req,res)=>{
+  const group = req.query.group==='1';
+  if (group) {
+    // Her ülkenin top 10
+    const sql=`
+      SELECT sub.id, sub.name, sub.country, sub.money, sub.rownum AS rank
       FROM (
         SELECT p.id, p.name, c.name as country, p.money,
-               ROW_NUMBER() OVER (PARTITION BY p.country_id ORDER BY p.money DESC) as rownum
+               ROW_NUMBER() OVER(PARTITION BY p.country_id ORDER BY p.money DESC) as rownum
         FROM public.players p
-        JOIN public.countries c ON p.country_id = c.id
+        JOIN public.countries c ON p.country_id=c.id
       ) sub
-      WHERE sub.rownum <= 10
+      WHERE sub.rownum <=10
       ORDER BY sub.country ASC, sub.rownum ASC
     `;
     const { rows } = await db.query(sql);
     return res.json(rows);
   }
 
-  // Normal => top100 + 3üst2alt
-  const playerId = req.query.playerId as string | undefined;
-  if (!(await redis.exists('leaderboard'))) {
+  // normal => top100 + (3üst2alt)
+  const playerId = req.query.playerId as string|undefined;
+  const lbExist = await redis.exists('leaderboard');
+  if (!lbExist) {
     await initializeLeaderboard();
   } else {
-    const c = await redis.zcard('leaderboard');
-    if (c === 0) await initializeLeaderboard();
+    const cnt = await redis.zcard('leaderboard');
+    if (cnt===0) {
+      await initializeLeaderboard();
+    }
   }
 
-  const top100 = await redis.zrevrange('leaderboard', 0, 99);
-  let unionIds: string[] = [];
+  const top100 = await redis.zrevrange('leaderboard',0,99);
+  let unionIds:string[]=[];
 
   if (playerId) {
     const rank = await redis.zrevrank('leaderboard', playerId);
-    if (rank === null) {
-      return res.status(404).json({ error: 'Player not found' });
+    if (rank===null) {
+      // "No data found" => henüz sync olmamış
+      return res.status(404).json({error:'Player not found in leaderboard yet'});
     }
-    if (rank < 100) {
-      unionIds = top100;
+    if (rank<100) {
+      unionIds=top100;
     } else {
-      const extraStart = Math.max(rank - 3, 0);
-      const extraEnd = rank + 2;
+      const extraStart = Math.max(rank-3,0);
+      const extraEnd = rank+2;
       const extra = await redis.zrevrange('leaderboard', extraStart, extraEnd);
-      const filtered = extra.filter((id) => !top100.includes(id));
-      unionIds = [...top100, ...filtered];
+      const filtered = extra.filter((x)=>!top100.includes(x));
+      unionIds=[...top100,...filtered];
     }
   } else {
-    unionIds = top100;
+    unionIds=top100;
   }
-  if (unionIds.length === 0) return res.json([]);
 
-  const placeholders = unionIds.map((_, i) => `$${i+1}`).join(',');
+  if (unionIds.length===0) {
+    return res.json([]);
+  }
+
+  const placeholders = unionIds.map((_,i)=>`$${i+1}`).join(',');
   const { rows: joined } = await db.query<PlayerJoined>(`
     SELECT p.id, p.name, c.name as country, p.money
     FROM public.players p
-    JOIN public.countries c ON p.country_id = c.id
+    JOIN public.countries c ON p.country_id=c.id
     WHERE p.id IN (${placeholders})
   `, unionIds);
 
   const map = new Map<string, PlayerJoined>();
-  joined.forEach((pl) => map.set(String(pl.id), pl));
+  joined.forEach(pl=>map.set(String(pl.id),pl));
 
-  const result: Array<PlayerJoined & { rank: number | null }> = [];
+  const result: Array<PlayerJoined & { rank:number|null }>=[];
+
   for (const id of unionIds) {
     const item = map.get(id);
     if (item) {
       const r = await redis.zrevrank('leaderboard', id);
       result.push({
         ...item,
-        rank: r !== null ? r + 1 : null
+        rank: r!==null ? r+1 : null
       });
     }
   }
   return res.json(result);
 }));
 
-app.get('/api/players/autocomplete', asyncHandler(async (req, res) => {
-  const q = (req.query.q as string) || '';
-  if (!q) return res.json([]);
+// ===================================================================
+// 4) Autocomplete
+// ===================================================================
+app.get('/api/players/autocomplete', asyncHandler(async(req,res)=>{
+  const q = (req.query.q as string)||'';
+  if (!q) {
+    return res.json([]);
+  }
   const like = `%${q}%`;
 
-  const { rows } = await db.query<{ id: number; name: string }>(`
-    SELECT id, name
+  const { rows } = await db.query<{id:number;name:string}>(`
+    SELECT id,name
     FROM public.players
     WHERE name ILIKE $1
     ORDER BY name ASC
     LIMIT 10
-  `, [like]);
-
-  res.json(rows);
+  `,[like]);
+  
+  return res.json(rows);
 }));
 
-// ===================== Haftalık ödül =====================
-cron.schedule('0 0 * * 0', async () => {
+// ===================================================================
+// 5) Haftalık ödül => top100 => 2% pool => vs
+// ===================================================================
+cron.schedule('0 0 * * 0', async()=>{
   if (isProcessing) {
-    console.log('[weeklyDist] skip => isProcessing...');
+    console.log('[weeklyDist] skip => concurrency lock...');
     return;
   }
-  isProcessing = true;
+  isProcessing=true;
   try {
     console.log('[weeklyDist] start...');
-    const data = await redis.zrevrange('leaderboard', 0, 99, 'WITHSCORES');
-    const playersList: LeaderboardEntry[] = [];
-    for (let i = 0; i < data.length; i += 2) {
-      playersList.push({ id: data[i], score: Number(data[i+1]) });
+    const data = await redis.zrevrange('leaderboard',0,99,'WITHSCORES');
+    const playersList: LeaderboardEntry[]=[];
+    for(let i=0;i<data.length;i+=2) {
+      playersList.push({ id:data[i], score:Number(data[i+1]) });
     }
+    const totalMoney = playersList.reduce((acc,p)=>acc+p.score,0);
+    const totalPool = totalMoney*0.02; // %2
 
-    const totalMoney = playersList.reduce((acc, p) => acc + p.score, 0);
-    const totalPool = totalMoney * 0.02;
-    const dist = [
-      { rank: 1, pct: 20 },
-      { rank: 2, pct: 15 },
-      { rank: 3, pct: 10 }
+    const dist=[
+      { rank:1, pct:20 },
+      { rank:2, pct:15 },
+      { rank:3, pct:10 }
     ];
-
-    const promises: Promise<any>[] = [];
-    for (let i = 0; i < playersList.length; i++) {
+    const updates:Promise<any>[]=[];
+    for (let i=0;i<playersList.length;i++) {
       const rank = i+1;
-      let amt = 0;
-      if (rank <= 3) {
-        amt = totalPool * (dist[rank-1].pct/100);
+      let amt=0;
+      if (rank<=3) {
+        amt= totalPool*(dist[rank-1].pct/100);
       } else {
         const remain = totalPool - totalPool*((20+15+10)/100);
-        amt = remain/97;
+        amt= remain/97;
       }
-      promises.push(
-        db.query('UPDATE public.players SET money=money+$1 WHERE id=$2', [Math.round(amt), playersList[i].id])
+      updates.push(
+        db.query('UPDATE public.players SET money=money+$1 WHERE id=$2',[Math.round(amt),playersList[i].id])
       );
     }
-    await Promise.all(promises);
+    await Promise.all(updates);
 
+    // reset
     await initializeLeaderboard();
     console.log('[weeklyDist] done.');
-  } catch (err) {
+  } catch(err) {
     console.error('[weeklyDist] error', err);
   } finally {
-    isProcessing = false;
+    isProcessing=false;
   }
 });
 
-// Dakikada bir => delta
-cron.schedule('*/1 * * * *', () => {
-  if (!isProcessing) {
-    syncNewPlayersToLeaderboard().catch((err) => console.error('[cron delta] error', err));
-  } else {
-    console.log('[cron delta] skip => isProcessing...');
-  }
-});
-
+// ===================================================================
+// Uygulama ayaklanınca init
+// ===================================================================
 app.listen(port, () => {
   console.log(`Backend server running on port ${port}`);
-  initializeLeaderboard().catch(err => console.error('[init error]', err));
+  // Tam yük => tablo 10m+ vs.
+  initializeLeaderboard().catch(e=>console.error('[init error]', e));
 });

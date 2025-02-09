@@ -1,8 +1,8 @@
+
 // seed.ts
 import { Pool } from 'pg';
 import { faker } from '@faker-js/faker';
 
-// Dünyadaki tüm ülkeler (ISO 3166). Kısaltılmış:
 const allCountries = [
   "Afghanistan","Albania","Algeria","Andorra","Angola","Antigua and Barbuda","Argentina",
   "Armenia","Aruba","Australia","Austria","Azerbaijan","Bahamas","Bahrain","Bangladesh",
@@ -37,7 +37,7 @@ const db = new Pool({
 
 async function main() {
   try {
-    // 1) Countries + Players tabloları var mı?
+    // 1) countries + players tabloları
     await db.query(`
       CREATE TABLE IF NOT EXISTS public.countries (
         id SERIAL PRIMARY KEY,
@@ -54,14 +54,13 @@ async function main() {
       );
     `);
 
-    // 2) Countries tablosu -> allCountries upsert
-    console.log('Syncing countries table...');
+    console.log('Syncing countries...');
     const countryIds = await updateCountriesTable(allCountries);
-    console.log(`Total ${countryIds.length} countries exist in DB.`);
+    console.log(`Total ${countryIds.length} countries in DB.`);
 
-    // 3) Players tablosuna Faker veri ekle
-    const totalPlayers = 1000000;  // 10 milyon
-    const BATCH_SIZE = 10_000;
+    // 2) Players ekleme
+    const totalPlayers = 10_000_000;  // Örnek => 1 milyon
+    const BATCH_SIZE = 20_000;
     console.log(`Will insert ${totalPlayers} players (batch size=${BATCH_SIZE}).`);
 
     let batchData: { name: string; countryId: number; money: number }[] = [];
@@ -81,13 +80,12 @@ async function main() {
         batchData = [];
 
         console.log(`Inserted so far: ${insertedCount} / ${totalPlayers}`);
-
-        // Her batch sonrası stack’i boşaltmak + db nefes aldırmak
-        await new Promise((res) => setImmediate(res));
+        console.log(playerName," ",money);
+        // Her batch sonrası => “stack” reset
+        await new Promise(res => setImmediate(res));
       }
     }
-
-    console.log(`All done. Inserted ${insertedCount} players total.`);
+    console.log(`All done => inserted ${insertedCount} players`);
 
   } catch (err) {
     console.error('Seed error:', err);
@@ -96,10 +94,6 @@ async function main() {
   }
 }
 
-/**
- * “allCountries” dizisindeki ülkeleri DB’ye ekler (DB’de yoksa).
- * Sonra DB’den (id) + name çekip “countryIds” dizisi döndürür.
- */
 async function updateCountriesTable(countryList: string[]): Promise<number[]> {
   const { rows: existingRows } = await db.query<{ id: number; name: string }>(
     'SELECT id, name FROM public.countries'
@@ -117,17 +111,13 @@ async function updateCountriesTable(countryList: string[]): Promise<number[]> {
   if (addedCount > 0) {
     console.log(`${addedCount} new countries added.`);
   } else {
-    console.log('No new countries. All exist already.');
+    console.log('No new countries (all exist).');
   }
 
   const { rows: finalRows } = await db.query<{ id: number }>('SELECT id FROM public.countries ORDER BY id');
   return finalRows.map((r) => r.id);
 }
 
-/**
- * Multi-values INSERT (10k satır tek seferde).
- * Her batch ekleme sonrası “stack” boşalacak şekilde “setImmediate” eklenmiştir.
- */
 async function insertBatchPlayers(batchData: { name: string; countryId: number; money: number }[]) {
   if (batchData.length === 0) return;
 
@@ -148,5 +138,4 @@ async function insertBatchPlayers(batchData: { name: string; countryId: number; 
   await db.query(sql, values);
 }
 
-// Çalıştır
-main().catch((err) => console.error('Main error:', err));
+main().catch(err => console.error('Main error:', err));
