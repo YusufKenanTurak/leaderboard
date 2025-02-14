@@ -1,56 +1,83 @@
+/**
+ * components/DragDropColumns.tsx
+ * A table that allows columns to be drag-and-dropped (reordered).
+ * Uses basic HTML5 drag and drop events on table headers.
+ */
+
 import React, { useState } from 'react';
-import styled from 'styled-components';
-
-type Column = {
-  key: string;
-  label: string;
-};
-
-const initialColumns: Column[] = [
-  { key: 'rank', label: 'Ranking' },
-  { key: 'name', label: 'Player Name' },
-  { key: 'country', label: 'Country' },
-  { key: 'money', label: 'Money' },
-];
-
-interface Player {
-  id: number;
-  name: string;
-  country: string;
-  rank: number | null;
-  money: number;
-}
+import { Player } from '../lib/api';
+import {
+  Table,
+  TableRow,
+  DraggableTH
+} from '../styles/dragDropColumns';
 
 interface Props {
   data: Player[];
   highlightedPlayerId?: number;
 }
 
+/**
+ * We define the initial columns that will be displayed in the table.
+ * Each column has a 'key' (matching a Player property) and a 'label'.
+ */
+const INITIAL_COLUMNS = [
+  { key: 'rank',    label: 'Rank' },
+  { key: 'name',    label: 'Player' },
+  { key: 'country', label: 'Country' },
+  { key: 'money',   label: 'Money' }
+];
+
 export default function DragDropColumns({ data, highlightedPlayerId }: Props) {
-  const [columns, setColumns] = useState<Column[]>(initialColumns);
+  // We store our columns in state so we can reorder them upon dragging.
+  const [columns, setColumns] = useState(INITIAL_COLUMNS);
 
-  const handleDragStart = (e: React.DragEvent<HTMLTableHeaderCellElement>, index: number) => {
-    e.dataTransfer.setData('text/plain', String(index));
-  };
-  const handleDragOver = (e: React.DragEvent<HTMLTableHeaderCellElement>) => {
+  /**
+   * Called when dragging begins on a <th>. We store the column index in the
+   * dataTransfer object so we know which column is being dragged.
+   */
+  function handleDragStart(e: React.DragEvent<HTMLTableHeaderCellElement>, startIndex: number) {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(startIndex));
+  }
+
+  /**
+   * Allow dropping on table headers by preventing the default "no-drop" behavior.
+   */
+  function handleDragOver(e: React.DragEvent<HTMLTableHeaderCellElement>) {
     e.preventDefault();
-  };
-  const handleDrop = (e: React.DragEvent<HTMLTableHeaderCellElement>, dropIndex: number) => {
-    const dragIndex = Number(e.dataTransfer.getData('text/plain'));
-    if (dragIndex === dropIndex) return;
+    e.dataTransfer.dropEffect = 'move';
+  }
 
-    const newCols = [...columns];
-    const [removed] = newCols.splice(dragIndex, 1);
-    newCols.splice(dropIndex, 0, removed);
-    setColumns(newCols);
-  };
+  /**
+   * When the user drops a header onto another, we reorder the columns array.
+   */
+  function handleDrop(e: React.DragEvent<HTMLTableHeaderCellElement>, dropIndex: number) {
+    e.preventDefault();
+    const startIndex = parseInt(e.dataTransfer.getData('text/plain'), 10);
+    if (startIndex === dropIndex) return;
+
+    const updated = reorder(columns, startIndex, dropIndex);
+    setColumns(updated);
+  }
+
+  /**
+   * reorder: A helper function to move an item in an array from 'startIndex'
+   * to 'endIndex'.
+   */
+  function reorder<T>(list: T[], startIndex: number, endIndex: number): T[] {
+    const result = Array.from(list);
+    const [removed] = result.splice(startIndex, 1);
+    result.splice(endIndex, 0, removed);
+    return result;
+  }
 
   return (
     <Table>
       <thead>
         <tr>
           {columns.map((col, index) => (
-            <Th
+            <DraggableTH
               key={col.key}
               draggable
               onDragStart={(e) => handleDragStart(e, index)}
@@ -58,75 +85,34 @@ export default function DragDropColumns({ data, highlightedPlayerId }: Props) {
               onDrop={(e) => handleDrop(e, index)}
             >
               {col.label}
-            </Th>
+            </DraggableTH>
           ))}
         </tr>
       </thead>
       <tbody>
-        {data.map((player) => {
-          const highlight = player.id === highlightedPlayerId;
-          return (
-            <Tr
-              key={player.id}
-              id={`player-row-${player.id}`}
-              $highlight={highlight}
-            >
-              {columns.map((col) => {
-                if (col.key === 'rank') return <Td key={col.key}>{player.rank || '-'}</Td>;
-                if (col.key === 'name') return <Td key={col.key}>{player.name}</Td>;
-                if (col.key === 'country') return <Td key={col.key}>{player.country}</Td>;
-                if (col.key === 'money') return <Td key={col.key}>{player.money.toLocaleString()}</Td>;
-                return <Td key={col.key}>-</Td>;
-              })}
-            </Tr>
-          );
-        })}
+        {data.map((player) => (
+          <TableRow
+            key={player.id}
+            id={`player-row-${player.id}`}
+            isHighlighted={highlightedPlayerId === player.id}
+          >
+            {columns.map((col) => (
+              <td key={col.key}>
+                {renderCell(player, col.key as keyof Player)}
+              </td>
+            ))}
+          </TableRow>
+        ))}
       </tbody>
     </Table>
   );
 }
 
-/* Styles */
-const Table = styled.table`
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 1rem;
-  background: #1d1335;
-  border: 1px solid #3a2d5d;
-  border-radius: 6px;
-  overflow: hidden;
-`;
-
-const Th = styled.th`
-  padding: 12px;
-  background-color: #2a1f4a;
-  color: #fff;
-  text-align: left;
-  cursor: move;
-  font-weight: 600;
-  user-select: none;
-  &:not(:last-child) {
-    border-right: 1px solid #3a2d5d;
-  }
-`;
-
-interface TrProps {
-  $highlight?: boolean;
+/**
+ * renderCell: A helper function that returns the appropriate property from Player
+ * based on the column key. If a certain property doesn't exist on 'Player',
+ * you might extend or customize this logic.
+ */
+function renderCell(player: Player, key: keyof Player) {
+  return player[key] ?? '–';
 }
-const Tr = styled.tr<TrProps>`
-  background-color: ${(props) => (props.$highlight ? '#4f3a78' : 'transparent')};
-  transition: background-color 0.3s;
-
-  &:hover {
-    background-color: #38275f;
-  }
-`;
-
-const Td = styled.td`
-  padding: 12px;
-  border-top: 1px solid #3a2d5d;
-  color: #fff;
-  &:not(:last-child) {
-    border-right: 1px solid #3a2d5d;
-  }
-`;
