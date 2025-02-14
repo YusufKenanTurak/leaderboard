@@ -37,7 +37,7 @@ const db = new Pool({
 
 async function main() {
   try {
-    // 1) countries + players tabloları
+    // 1) countries + players tables
     await db.query(`
       CREATE TABLE IF NOT EXISTS public.countries (
         id SERIAL PRIMARY KEY,
@@ -58,8 +58,8 @@ async function main() {
     const countryIds = await updateCountriesTable(allCountries);
     console.log(`Total ${countryIds.length} countries in DB.`);
 
-    // 2) Players ekleme
-    const totalPlayers = 10_000_000;  // Örnek => 1 milyon
+    // 2) Add players
+    const totalPlayers = 10_000_000;  // 10M
     const BATCH_SIZE = 20_000;
     console.log(`Will insert ${totalPlayers} players (batch size=${BATCH_SIZE}).`);
 
@@ -80,8 +80,6 @@ async function main() {
         batchData = [];
 
         console.log(`Inserted so far: ${insertedCount} / ${totalPlayers}`);
-        console.log(playerName," ",money);
-        // Her batch sonrası => “stack” reset
         await new Promise(res => setImmediate(res));
       }
     }
