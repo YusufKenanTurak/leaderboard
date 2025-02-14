@@ -1,3 +1,4 @@
+/* server.ts */
 import express, { Request, Response, NextFunction, RequestHandler } from 'express';
 import { Pool } from 'pg';
 import Redis from 'ioredis';
@@ -6,7 +7,6 @@ import cors from 'cors';
 import cron from 'node-cron';
 
 dotenv.config();
-
 const app = express();
 const port = process.env.PORT || 5000;
 
@@ -26,7 +26,7 @@ const redis = new Redis(process.env.REDIS_URL || 'redis://redis:6379');
 // ===================================================================
 interface PlayerRow {
   id: number;
-  name?: string; // DB sorgularına göre opsiyonel
+  name?: string; 
   country_id?: number;
   money: number;
 }
@@ -45,7 +45,7 @@ interface LeaderboardEntry {
 // Hata Yakalama (Async Handler)
 // ===================================================================
 const asyncHandler = (
-  fn: (req:Request,res:Response,next:NextFunction)=>Promise<any>
+  fn: (req: Request, res: Response, next: NextFunction) => Promise<any>
 ): RequestHandler => {
   return (req, res, next) => fn(req, res, next).catch(next);
 };
@@ -89,6 +89,7 @@ async function ensureSchemaExists() {
 // ===================================================================
 /**
  * Tüm players tablosunu (money) Redis'e yükler.
+ * Başlangıçta pageSizeDB=500k, chunkSizeRedis=50k => Hızlı ama RangeError riski
  * "Dinamik paged + chunk + setImmediate" => 10+ milyon'da "RangeError" önleme
  */
 async function initializeLeaderboard(): Promise<void> {
@@ -102,13 +103,17 @@ async function initializeLeaderboard(): Promise<void> {
     console.log('[INIT] Start full load...');
     await ensureSchemaExists();
 
+    // init_done bayrağını sıfırla
+    await redis.del('leaderboard:init_done');
+
     // Leaderboard sıfırla
     await redis.del('leaderboard');
-    // "sync_offset" vb. de sıfırlayabilirsiniz
+    // sync_offset'ı sıfırlayabilirsiniz
     await redis.set('leaderboard:sync_offset','0');
 
-    let pageSizeDB = 100_000;
-    let chunkSizeRedis = 10_000;
+    // Daha büyük başlangıç boyutları:
+    let pageSizeDB = 500_000;      
+    let chunkSizeRedis = 50_000;  
 
     let offset = 0;
     let totalProcessed = 0;
@@ -126,7 +131,7 @@ async function initializeLeaderboard(): Promise<void> {
         rows = dbRows;
       } catch (err) {
         console.error(`[INIT] DB error, pageSizeDB=${pageSizeDB}`, err);
-        pageSizeDB = Math.floor(pageSizeDB/2);
+        pageSizeDB = Math.floor(pageSizeDB / 2);
         if (pageSizeDB<1000) {
           console.error('[INIT] pageSizeDB < 1000 => ABORT');
           throw err;
@@ -177,21 +182,23 @@ async function initializeLeaderboard(): Promise<void> {
       }
 
       offset += rows.length;
-      // sayfa bitince
       await new Promise(res=>setImmediate(res));
 
-      // pageSize & chunkSize adapt
-      pageSizeDB=Math.min(pageSizeDB*2,1_000_000);
-      chunkSizeRedis=Math.min(chunkSizeRedis*2,50_000);
+      // sayfa bitti => eğer chunk ufaldıysa sonraki sayfada yavaş gitmesin diye tekrar büyüt
+      pageSizeDB=Math.min(pageSizeDB * 2, 1_000_000);
+      chunkSizeRedis=Math.min(chunkSizeRedis * 2, 100_000); 
       console.log(`[INIT] done page #${pageIndex}, totalProcessed=${totalProcessed}, pageSizeDB=${pageSizeDB}, chunkSizeRedis=${chunkSizeRedis}`);
     }
 
-    // last_known_id = max
+    // max id
     const { rows: maxRow } = await db.query<{ maxid:number }>(`
       SELECT COALESCE(MAX(id),0) as maxid FROM public.players
     `);
     const maxId = maxRow[0].maxid;
     await redis.set('leaderboard:last_known_id', maxId.toString());
+
+    // init_done => 1
+    await redis.set('leaderboard:init_done','1');
 
     console.log(`[INIT] complete => totalProcessed=${totalProcessed}, last_known_id=${maxId}`);
 
@@ -204,9 +211,8 @@ async function initializeLeaderboard(): Promise<void> {
 // 2) Yarı-Parçalı Delta Sync (Daha Hızlı)
 // ===================================================================
 /**
- * Cron => her 10 saniyede (örnek) tetiklenir
- * Her tetiklemede, "BİRKAÇ" sayfa (ör. 5 sayfa) işliyoruz.
- * Her sayfa bitince setImmediate => stack reset
+ * Cron => her 10 saniyede tetiklenir
+ * Her tetiklemede, "5 sayfa" işliyoruz.
  */
 cron.schedule('*/10 * * * * *', async () => {
   if (isProcessing) {
@@ -215,11 +221,9 @@ cron.schedule('*/10 * * * * *', async () => {
   }
   isProcessing=true;
   try {
-    // Mesela 5 sayfa arka arkaya senkron
     for (let j=0; j<5; j++) {
       const done = await syncOnePageOfNewPlayers();
       if (done) {
-        // tablo bitti => dur
         break;
       }
     }
@@ -231,23 +235,22 @@ cron.schedule('*/10 * * * * *', async () => {
 });
 
 /**
- * Bir sayfalık "yeni" veriyi senkronize eder (delta).
- * Geriye "true" dönerse tablo bitti demek.
+ * Bir sayfalık "yeni" veriyi senkronize eder.
+ * Geriye "true" dönerse => tablo bitti
  */
 async function syncOnePageOfNewPlayers(): Promise<boolean> {
   await ensureSchemaExists();
 
   const lastKnownIdStr = await redis.get('leaderboard:last_known_id');
-  let lastKnownId = lastKnownIdStr ? parseInt(lastKnownIdStr,10) : 0;
+  let lk = lastKnownIdStr ? parseInt(lastKnownIdStr,10) : 0;
 
   const syncOffsetStr = await redis.get('leaderboard:sync_offset');
-  let syncOffset = syncOffsetStr ? parseInt(syncOffsetStr,10) : 0;
+  let syncOff = syncOffsetStr ? parseInt(syncOffsetStr,10) : 0;
 
-  // Tek sayfa boyutu
-  const PAGE_SIZE_DB = 100_000;
-  let chunkSizeRedis=10_000;
+  let pageSizeDB = 100_000;
+  let chunkSizeRedis=50_000;
 
-  console.log(`[deltaOnePage] lastKnownId=${lastKnownId}, offset=${syncOffset}, pageSize=${PAGE_SIZE_DB}`);
+  console.log(`[deltaOnePage] lastKnownId=${lk}, offset=${syncOff}, pageSize=${pageSizeDB}`);
 
   const { rows } = await db.query<PlayerRow>(`
     SELECT id, money
@@ -255,12 +258,12 @@ async function syncOnePageOfNewPlayers(): Promise<boolean> {
     WHERE id > $1
     ORDER BY id ASC
     LIMIT $2 OFFSET $3
-  `,[lastKnownId, PAGE_SIZE_DB, syncOffset]);
+  `,[lk, pageSizeDB, syncOff]);
 
   if (rows.length===0) {
     console.log('[deltaOnePage] No more new players => reset offset=0');
     await redis.set('leaderboard:sync_offset','0');
-    return true; // Bitti
+    return true; 
   }
 
   let i=0;
@@ -281,7 +284,6 @@ async function syncOnePageOfNewPlayers(): Promise<boolean> {
         success=true;
         i+=slice.length;
 
-        // Her chunk => stack reset
         await new Promise(res=>setImmediate(res));
       } catch(e:any) {
         if (e instanceof RangeError) {
@@ -294,7 +296,7 @@ async function syncOnePageOfNewPlayers(): Promise<boolean> {
     }
   }
 
-  const newOffset = syncOffset+rows.length;
+  const newOffset = syncOff+rows.length;
   await redis.set('leaderboard:sync_offset', newOffset.toString());
   console.log(`[deltaOnePage] processed ${rows.length} => new sync_offset=${newOffset}`);
   return false;
@@ -304,19 +306,27 @@ async function syncOnePageOfNewPlayers(): Promise<boolean> {
 // 3) Leaderboard Endpoint
 // ===================================================================
 app.get('/api/leaderboard', asyncHandler(async(req,res)=>{
+  // Eğer init_done yoksa => "indexing in progress" mesajı
+  const initDone = await redis.get('leaderboard:init_done');
+  if (!initDone) {
+    return res.status(503).json({ error:'IndexingInProgress', message:'We are indexing, please try later.' });
+  }
+
   const group = req.query.group==='1';
   if (group) {
-    // Her ülkenin top 10
+    // "Her ülke top10" sorgusu
     const sql=`
-      SELECT sub.id, sub.name, sub.country, sub.money, sub.rownum AS rank
-      FROM (
-        SELECT p.id, p.name, c.name as country, p.money,
-               ROW_NUMBER() OVER(PARTITION BY p.country_id ORDER BY p.money DESC) as rownum
-        FROM public.players p
-        JOIN public.countries c ON p.country_id=c.id
-      ) sub
-      WHERE sub.rownum <=10
-      ORDER BY sub.country ASC, sub.rownum ASC
+      SELECT p.id, p.name, c.name as country, p.money
+      FROM public.players p
+      JOIN public.countries c ON p.country_id = c.id
+      WHERE p.id IN (
+        SELECT id FROM (
+          SELECT id, ROW_NUMBER() OVER (PARTITION BY country_id ORDER BY money DESC) as rn
+          FROM public.players
+        ) t
+        WHERE t.rn <= 10
+      )
+      ORDER BY country, money DESC
     `;
     const { rows } = await db.query(sql);
     return res.json(rows);
@@ -340,8 +350,7 @@ app.get('/api/leaderboard', asyncHandler(async(req,res)=>{
   if (playerId) {
     const rank = await redis.zrevrank('leaderboard', playerId);
     if (rank===null) {
-      // "No data found" => henüz sync olmamış
-      return res.status(404).json({error:'Player not found in leaderboard yet'});
+      return res.status(404).json({ error:'Player not found in leaderboard yet' });
     }
     if (rank<100) {
       unionIds=top100;
@@ -390,12 +399,17 @@ app.get('/api/leaderboard', asyncHandler(async(req,res)=>{
 // 4) Autocomplete
 // ===================================================================
 app.get('/api/players/autocomplete', asyncHandler(async(req,res)=>{
+  // Eğer init_done yoksa => "indexing in progress"
+  const initDone = await redis.get('leaderboard:init_done');
+  if (!initDone) {
+    return res.status(503).json({ error:'IndexingInProgress', message:'We are indexing, please try later.' });
+  }
+
   const q = (req.query.q as string)||'';
   if (!q) {
     return res.json([]);
   }
   const like = `%${q}%`;
-
   const { rows } = await db.query<{id:number;name:string}>(`
     SELECT id,name
     FROM public.players
@@ -403,7 +417,6 @@ app.get('/api/players/autocomplete', asyncHandler(async(req,res)=>{
     ORDER BY name ASC
     LIMIT 10
   `,[like]);
-  
   return res.json(rows);
 }));
 
@@ -424,7 +437,7 @@ cron.schedule('0 0 * * 0', async()=>{
       playersList.push({ id:data[i], score:Number(data[i+1]) });
     }
     const totalMoney = playersList.reduce((acc,p)=>acc+p.score,0);
-    const totalPool = totalMoney*0.02; // %2
+    const totalPool = totalMoney*0.02;
 
     const dist=[
       { rank:1, pct:20 },
@@ -447,7 +460,6 @@ cron.schedule('0 0 * * 0', async()=>{
     }
     await Promise.all(updates);
 
-    // reset
     await initializeLeaderboard();
     console.log('[weeklyDist] done.');
   } catch(err) {
@@ -462,6 +474,5 @@ cron.schedule('0 0 * * 0', async()=>{
 // ===================================================================
 app.listen(port, () => {
   console.log(`Backend server running on port ${port}`);
-  // Tam yük => tablo 10m+ vs.
   initializeLeaderboard().catch(e=>console.error('[init error]', e));
 });

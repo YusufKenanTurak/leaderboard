@@ -1,5 +1,4 @@
-// frontend/pages/index.tsx
-
+/* frontend/pages/index.tsx */
 import React, { useEffect, useState } from 'react';
 import Image from 'next/image';
 import { useQuery } from 'react-query';
@@ -14,7 +13,6 @@ type Player = {
   money: number;
   rank: number | null;
 };
-
 type AutoCompleteItem = {
   id: number;
   name: string;
@@ -30,6 +28,11 @@ async function fetchLeaderboard(playerId?: string, group?: boolean): Promise<Pla
   if (queryString) url += `?${queryString}`;
 
   const res = await fetch(url);
+  // 503 => indexingInProgress
+  if (res.status === 503) {
+    const data = await res.json();
+    throw new Error(data.message || 'Indexing in progress');
+  }
   if (!res.ok) return [];
   return res.json();
 }
@@ -39,6 +42,11 @@ async function fetchAutocomplete(query: string): Promise<AutoCompleteItem[]> {
   if (!query) return [];
   const url = `http://localhost:5000/api/players/autocomplete?q=${encodeURIComponent(query)}`;
   const res = await fetch(url);
+  if (res.status === 503) {
+    // "IndexingInProgress"
+    const data = await res.json();
+    throw new Error(data.message || 'Indexing in progress');
+  }
   if (!res.ok) throw new Error('Autocomplete error');
   return res.json();
 }
@@ -54,10 +62,27 @@ export default function HomePage() {
   const [foundRank, setFoundRank] = useState<number | null>(null);
   const [highlightedPlayerId, setHighlightedPlayerId] = useState<number | null>(null);
 
+  // Extra: groupLoading => butona basınca "Loading..." göstereceğiz.
+  const [groupLoading, setGroupLoading] = useState(false);
+
+  // Additional: indexingInProgress => sunucu 503 dönerse
+  const [indexingInProgress, setIndexingInProgress] = useState(false);
+
   // useQuery => call fetchLeaderboard
   const { data, isLoading, error, refetch } = useQuery(
     ['leaderboard', searchId, isGrouped],
-    () => fetchLeaderboard(searchId, isGrouped),
+    async () => {
+      try {
+        const d = await fetchLeaderboard(searchId, isGrouped);
+        setIndexingInProgress(false); 
+        return d;
+      } catch (err: any) {
+        if (err.message.includes('Indexing in progress')) {
+          setIndexingInProgress(true);
+        }
+        throw err;
+      }
+    },
     { keepPreviousData: true }
   );
 
@@ -76,7 +101,13 @@ export default function HomePage() {
           setShowSuggestions(true);
         }
       })
-      .catch((err) => console.error('autocomplete error:', err));
+      .catch((err) => {
+        // eğer "Indexing in progress" ise => setIndexingInProgress(true)
+        if (err.message.includes('Indexing in progress')) {
+          setIndexingInProgress(true);
+        }
+        console.error('autocomplete error:', err);
+      });
 
     return () => { active = false; };
   }, [searchTerm]);
@@ -101,15 +132,22 @@ export default function HomePage() {
         refetch();
       } else {
         // Name => fetchAutocomplete
-        const auto = await fetchAutocomplete(searchTerm);
-        if (auto.length > 0) {
-          setSearchId(String(auto[0].id));
-        } else {
-          setSearchId('');
-        }
+        fetchAutocomplete(searchTerm)
+          .then((auto) => {
+            if (auto.length > 0) {
+              setSearchId(String(auto[0].id));
+            } else {
+              setSearchId('');
+            }
+            refetch();
+          })
+          .catch((err) => {
+            console.error('search error:', err);
+          });
       }
+    } else {
+      refetch();
     }
-    refetch();
   }
 
   // Clear
@@ -123,6 +161,25 @@ export default function HomePage() {
     refetch();
   }
 
+  // Group button
+  async function handleGroupToggle() {
+    if (!isGrouped) {
+      setGroupLoading(true);    
+      setIsGrouped(true);
+      refetch();               
+    } else {
+      setIsGrouped(false);
+      refetch();
+    }
+  }
+
+  // data değiştiğinde groupLoading false
+  useEffect(() => {
+    if (!isLoading) {
+      setGroupLoading(false);
+    }
+  }, [isLoading]);
+
   // data değişince highlight
   useEffect(() => {
     if (!data || data.length === 0) return;
@@ -134,17 +191,58 @@ export default function HomePage() {
       setFoundRank(found.rank);
       setHighlightedPlayerId(found.id);
       const rowEl = document.getElementById(`player-row-${found.id}`);
-      if (rowEl) rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (rowEl) {
+        rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
     } else {
       setFoundRank(null);
       setHighlightedPlayerId(null);
     }
   }, [data, searchId]);
 
-  // Render
-  if (isLoading) return <Message>Loading...</Message>;
-  if (error) return <Message>{(error as Error).message}</Message>;
+  // collapse all, uncollapse all
+  function handleCollapseAll() {
+    const detailsList = document.querySelectorAll('details');
+    detailsList.forEach((d) => {
+      (d as HTMLDetailsElement).open = false;
+    });
+  }
+  function handleUncollapseAll() {
+    const detailsList = document.querySelectorAll('details');
+    detailsList.forEach((d) => {
+      (d as HTMLDetailsElement).open = true;
+    });
+  }
 
+  // 1) indexingInProgress => "We are indexing" 
+  if (indexingInProgress) {
+    return (
+      <MainContainer>
+        <Message>We are indexing data, please try later.</Message>
+      </MainContainer>
+    );
+  }
+
+  // 2) global loading
+  if (isLoading) {
+    return <Message>Loading...</Message>;
+  }
+
+  // 3) error
+  if (error) {
+    return <Message>{(error as Error).message}</Message>;
+  }
+
+  // 4) eğer groupLoading => "Loading group data..."
+  if (groupLoading) {
+    return (
+      <MainContainer>
+        <Message>Loading group data...</Message>
+      </MainContainer>
+    );
+  }
+
+  // 5) data yok
   if (!data || data.length === 0) {
     return (
       <MainContainer>
@@ -178,7 +276,7 @@ export default function HomePage() {
           </SearchContainer>
           <Button type="submit">Search</Button>
           <Button type="button" onClick={handleClear}>Clear</Button>
-          <Button type="button" onClick={() => setIsGrouped(!isGrouped)}>
+          <Button type="button" onClick={handleGroupToggle}>
             {isGrouped ? 'Ungroup' : 'Group by Country'}
           </Button>
         </SearchForm>
@@ -191,7 +289,7 @@ export default function HomePage() {
   // rank info
   const rankMessage = foundRank ? `${searchTerm}'s rank #${foundRank}` : '';
 
-  // “Group by Country” mod => her ülke top10
+  // “Group by Country” mod => her ülke top 10
   if (isGrouped) {
     const byCountry: Record<string, Player[]> = {};
     data.forEach((p) => {
@@ -232,7 +330,9 @@ export default function HomePage() {
           </SearchContainer>
           <Button type="submit">Search</Button>
           <Button type="button" onClick={handleClear}>Clear</Button>
-          <Button type="button" onClick={() => setIsGrouped(false)}>Ungroup</Button>
+          <Button type="button" onClick={handleGroupToggle}>Ungroup</Button>
+          <Button type="button" onClick={handleCollapseAll}>Collapse All</Button>
+          <Button type="button" onClick={handleUncollapseAll}>Uncollapse All</Button>
         </SearchForm>
 
         {rankMessage && <RankInfo>{rankMessage}</RankInfo>}
@@ -285,7 +385,7 @@ export default function HomePage() {
         </SearchContainer>
         <Button type="submit">Search</Button>
         <Button type="button" onClick={handleClear}>Clear</Button>
-        <Button type="button" onClick={() => setIsGrouped(true)}>Group by Country</Button>
+        <Button type="button" onClick={handleGroupToggle}>Group by Country</Button>
       </SearchForm>
 
       {rankMessage && <RankInfo>{rankMessage}</RankInfo>}
