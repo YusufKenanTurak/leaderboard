@@ -233,7 +233,7 @@ export default function HomePage() {
     <MainContainer>
       <HeaderArea>
         <Logo href="https://www.panteon.games/tr/" target="_blank" rel="noopener noreferrer">
-          <Image src="/logo.png" alt="PANTEON" width={150} height={60} />
+          <Image src="https://www.panteon.games/wp-content/uploads/2022/06/1661xlogo.png" alt="PANTEON" width={415} height={71} />
         </Logo>
         <LeaderboardTitle>
           {isGrouped ? 'Leaderboard (Top 10 Each Country)' : 'Leaderboard'}
