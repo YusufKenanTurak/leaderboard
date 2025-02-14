@@ -31,8 +31,10 @@ const allCountries = [
   "Venezuela","Vietnam","Yemen","Zambia","Zimbabwe"
 ];
 
+const DB_URL = process.env.DATABASE_URL;
+
 const db = new Pool({
-  connectionString: 'postgresql://admin:admin@localhost:5432/leaderboard',
+  connectionString: DB_URL
 });
 
 async function main() {

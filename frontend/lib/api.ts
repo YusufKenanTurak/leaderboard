@@ -15,13 +15,13 @@ export type Player = {
     id: number;
     name: string;
   };
-  
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:5000/api';
   /**
    * Fetch leaderboard data from the backend.
    * Optionally filter by playerId, and group by country if needed.
    */
   export async function fetchLeaderboard(playerId?: string, group?: boolean): Promise<Player[]> {
-    let url = 'http://localhost:5000/api/leaderboard';
+    let url = `${API_BASE_URL}/leaderboard`;
     const params = new URLSearchParams();
     if (playerId) params.set('playerId', playerId);
     if (group) params.set('group', '1');
@@ -49,7 +49,7 @@ export type Player = {
     if (!query) {
       return [];
     }
-    const url = `http://localhost:5000/api/players/autocomplete?q=${encodeURIComponent(query)}`;
+    const url = `${API_BASE_URL}/players/autocomplete?q=${encodeURIComponent(query)}`;
     const res = await fetch(url);
     if (res.status === 503) {
       const data = await res.json();

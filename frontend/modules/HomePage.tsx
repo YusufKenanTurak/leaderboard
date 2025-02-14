@@ -93,8 +93,8 @@ export default function HomePage() {
   );
 
   // ----------------- Autocomplete -------------------
-  useEffect(() => {
-    if (!searchTerm) {
+    useEffect(() => {
+    if (searchTerm.length < 2) {
       setSuggestions([]);
       setShowSuggestions(false);
       return;
@@ -141,6 +141,7 @@ export default function HomePage() {
           .then((auto) => {
             if (auto.length > 0) {
               setSearchId(String(auto[0].id));
+              setShowSuggestions(false);
             } else {
               setSearchId('');
             }
@@ -152,6 +153,8 @@ export default function HomePage() {
             console.error('Search error:', err);
           });
       }
+    } else {
+      setShowSuggestions(false);
     }
   }
 
@@ -211,7 +214,7 @@ export default function HomePage() {
 
   // (1) Indexing => 503 almışız => "We are indexing..."
   if (indexingInProgress) {
-    return <Message>We are indexing data. Please try later.</Message>;
+    return <Message>We are indexing data. Please try a few minutes later.</Message>;
   }
 
   // (2) Loading -> either normal or grouped
@@ -233,7 +236,7 @@ export default function HomePage() {
     <MainContainer>
       <HeaderArea>
         <Logo href="https://www.panteon.games/tr/" target="_blank" rel="noopener noreferrer">
-          <Image src="https://www.panteon.games/wp-content/uploads/2022/06/1661xlogo.png" alt="PANTEON" width={415} height={71} />
+            <Image src="https://www.panteon.games/wp-content/uploads/2022/06/1661xlogo.png" alt="PANTEON" width={415} height={71} />
         </Logo>
         <LeaderboardTitle>
           {isGrouped ? 'Leaderboard (Top 10 Each Country)' : 'Leaderboard'}

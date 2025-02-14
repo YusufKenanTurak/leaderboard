@@ -28,7 +28,7 @@ router.get('/leaderboard', asyncHandler(async (req, res) => {
   if (!initDone /* || locked */) {
     return res.status(503).json({
       error: 'IndexingInProgress',
-      message: 'We are indexing data. Please try later.'
+      message: 'We are indexing data. Please try a few minutes later.'
     });
   }
 
@@ -79,7 +79,7 @@ router.get('/players/autocomplete', asyncHandler(async (req, res) => {
   if (!initDone /* || locked */) {
     return res.status(503).json({
       error: 'IndexingInProgress',
-      message: 'We are indexing data, please try later.'
+      message: 'We are indexing data, Please try a few minutes later.'
     });
   }
 
