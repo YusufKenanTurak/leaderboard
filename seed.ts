@@ -31,7 +31,7 @@ const allCountries = [
   "Venezuela","Vietnam","Yemen","Zambia","Zimbabwe"
 ];
 
-const DB_URL = process.env.DATABASE_URL;
+const DB_URL = 'postgresql://neondb_owner:npg_qpe3jxAUW8ly@ep-dawn-darkness-a2vu75w2-pooler.eu-central-1.aws.neon.tech/neondb?sslmode=require';
 
 const db = new Pool({
   connectionString: DB_URL
@@ -61,7 +61,7 @@ async function main() {
     console.log(`Total ${countryIds.length} countries in DB.`);
 
     // 2) Add players
-    const totalPlayers = 10_000_000;  // 10M
+    const totalPlayers = 1_000_000;  // 10M
     const BATCH_SIZE = 20_000;
     console.log(`Will insert ${totalPlayers} players (batch size=${BATCH_SIZE}).`);
 
