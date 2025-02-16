@@ -7,4 +7,4 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_BASE_URL=https://leaderboard-backend.up.railway.app/api
+      - NEXT_PUBLIC_API_BASE_URL=backendurl/api
