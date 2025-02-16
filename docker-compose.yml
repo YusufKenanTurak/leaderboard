@@ -8,7 +8,7 @@ services:
       - "5000:5000"
     environment:
       - DATABASE_URL=postgresql://admin:admin@db:5432/leaderboard
-      - REDIS_URL=redis://default:ATr4AAIjcDEwMjMxYjgwNWZjN2Y0Y2U0YjRmZDQwODgyN2ViYjZjMHAxMA@easy-moccasin-15096.upstash.io:6379
+      - REDIS_URL=rediss://default:ATr4AAIjcDEwMjMxYjgwNWZjN2Y0Y2U0YjRmZDQwODgyN2ViYjZjMHAxMA@easy-moccasin-15096.upstash.io:6379
       - PORT=5000
     depends_on:
       db:
