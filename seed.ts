@@ -31,7 +31,7 @@ const allCountries = [
   "Venezuela","Vietnam","Yemen","Zambia","Zimbabwe"
 ];
 
-const DB_URL = 'postgresql://neondb_owner:npg_qpe3jxAUW8ly@ep-dawn-darkness-a2vu75w2-pooler.eu-central-1.aws.neon.tech/neondb?sslmode=require';
+const DB_URL = 'postgresql://admin:admin@192.168.1.110:5432/leaderboard';
 
 const db = new Pool({
   connectionString: DB_URL
