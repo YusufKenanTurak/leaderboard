@@ -16,6 +16,10 @@ export type Player = {
     name: string;
   };
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://leaderboardprojectapi.loca.lt/api';
+  const DEFAULT_HEADERS = {
+    'bypass-tunnel-reminder': 'true',
+    'Content-Type': 'application/json',
+  };
   /**
    * Fetch leaderboard data from the backend.
    * Optionally filter by playerId, and group by country if needed.
@@ -31,7 +35,9 @@ export type Player = {
       url += `?${queryString}`;
     }
   
-    const res = await fetch(url);
+    const res = await fetch(url, {
+      headers: DEFAULT_HEADERS,
+    });
     if (res.status === 503) {
       const data = await res.json();
       throw new Error(data.message || 'Indexing in progress');
@@ -50,7 +56,9 @@ export type Player = {
       return [];
     }
     const url = `${API_BASE_URL}/players/autocomplete?q=${encodeURIComponent(query)}`;
-    const res = await fetch(url);
+    const res = await fetch(url, {
+      headers: DEFAULT_HEADERS,
+    });
     if (res.status === 503) {
       const data = await res.json();
       throw new Error(data.message || 'Indexing in progress');
