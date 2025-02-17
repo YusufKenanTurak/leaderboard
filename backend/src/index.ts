@@ -20,7 +20,14 @@ const app = express();
 const port = process.env.PORT || 5000;
 
 // Basic middlewares
-app.use(cors());
+app.use(
+  cors({
+    origin: ['https://leaderboardprojectapi.loca.lt'], 
+    methods: 'GET,POST,PUT,DELETE',
+    allowedHeaders: 'Content-Type,Authorization,bypass-tunnel-reminder',
+  })
+);
+
 app.use(express.json());
 
 // Simple readiness route
@@ -31,7 +38,7 @@ app.get('/', (req, res) => {
 // Leaderboard routes
 app.use('/api', leaderboardRoutes);
 
-app.listen(port, () => {
+app.listen(port, '0.0.0.0', () => {
   console.log(`Backend server running on port ${port}`);
   // Attempt to initialize the leaderboard on startup
   initializeLeaderboard().catch((error) => console.error('[init error]', error));
