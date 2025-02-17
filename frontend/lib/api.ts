@@ -15,7 +15,7 @@ export type Player = {
     id: number;
     name: string;
   };
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:5000/api';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
   /**
    * Fetch leaderboard data from the backend.
    * Optionally filter by playerId, and group by country if needed.
