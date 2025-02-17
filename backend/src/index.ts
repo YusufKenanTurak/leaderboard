@@ -25,6 +25,7 @@ app.use(express.json());
 
 // Simple readiness route
 app.get('/', (req, res) => {
+  res.setHeader('bypass-tunnel-reminder', 'true');
   res.send('Leaderboard Backend is running...');
 });
 

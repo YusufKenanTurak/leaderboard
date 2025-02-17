@@ -20,6 +20,7 @@ const router = Router();
  * - If init not done or concurrency lock => 503.
  */
 router.get('/leaderboard', asyncHandler(async (req, res) => {
+  res.setHeader('bypass-tunnel-reminder', 'true');
   // 1) initDone kontrolü
   const initDone = await redis.get('leaderboard:init_done');
   // 2) concurrency lock kontrolü (opsiyonel)
@@ -74,6 +75,7 @@ router.get('/leaderboard', asyncHandler(async (req, res) => {
  * - If init not done => 503
  */
 router.get('/players/autocomplete', asyncHandler(async (req, res) => {
+  res.setHeader('bypass-tunnel-reminder', 'true');
   const initDone = await redis.get('leaderboard:init_done');
   // const locked = isProcessing();
   if (!initDone /* || locked */) {
