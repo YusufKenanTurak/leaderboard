@@ -61,7 +61,7 @@ async function main() {
     console.log(`Total ${countryIds.length} countries in DB.`);
 
     // 2) Add players
-    const totalPlayers = 1_000_000;  // 10M
+    const totalPlayers = 10_000_000;  // 10M
     const BATCH_SIZE = 20_000;
     console.log(`Will insert ${totalPlayers} players (batch size=${BATCH_SIZE}).`);
 
