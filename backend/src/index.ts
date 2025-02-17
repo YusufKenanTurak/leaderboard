@@ -17,7 +17,7 @@ import './cron/jobs';
 dotenv.config();
 
 const app = express();
-const port = 5000;
+const port: number = Number(process.env.PORT) || 5000;
 
 // Basic middlewares
 app.use(
