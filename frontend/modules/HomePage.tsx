@@ -1,10 +1,10 @@
 /**
  * modules/HomePage.tsx
- * 
- * - İki ayrı query: normal, grouped
- * - "Indexing in progress" => 503 yakalanırsa, ekranda "We are indexing..."
- * - Arka planda sorgu tekrarları -> init_done set edilince success 
- *   => indexingInProgress=false, tablo gösterilir.
+ *
+ * - Two separate queries: normal, grouped
+ * - "Indexing in progress" => if we get a 503, show "We are indexing..."
+ * - In the background, it will retry the request -> once init_done is set, success
+ *   => indexingInProgress = false, table is displayed.
  */
 
 import React, { useState, useEffect, FormEvent } from 'react';
@@ -27,7 +27,6 @@ import {
   RankInfo
 } from '../styles/homePage';
 
-// Küçük yardımcı
 function isIndexingError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
   const msg = (err as Error).message || '';
@@ -93,7 +92,7 @@ export default function HomePage() {
   );
 
   // ----------------- Autocomplete -------------------
-    useEffect(() => {
+  useEffect(() => {
     if (searchTerm.length < 2) {
       setSuggestions([]);
       setShowSuggestions(false);
@@ -212,7 +211,7 @@ export default function HomePage() {
 
   // ----------------- Render Logic -------------------
 
-  // (1) Indexing => 503 almışız => "We are indexing..."
+  // (1) If indexing => we got a 503 => "We are indexing..."
   if (indexingInProgress) {
     return <Message>We are indexing data. Please try a few minutes later.</Message>;
   }
@@ -236,7 +235,7 @@ export default function HomePage() {
     <MainContainer>
       <HeaderArea>
         <Logo href="https://www.panteon.games/tr/" target="_blank" rel="noopener noreferrer">
-            <Image src="https://www.panteon.games/wp-content/uploads/2022/06/1661xlogo.png" alt="PANTEON" width={415} height={71} />
+          <Image src="https://www.panteon.games/wp-content/uploads/2022/06/1661xlogo.png" alt="PANTEON" width={415} height={71} />
         </Logo>
         <LeaderboardTitle>
           {isGrouped ? 'Leaderboard (Top 10 Each Country)' : 'Leaderboard'}

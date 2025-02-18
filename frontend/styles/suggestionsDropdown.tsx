@@ -1,7 +1,7 @@
 /**
  * SuggestionsDropdown.tsx
- * Basit bir autocomplete dropdown listesi. Stil kuralları GlobalStyle’a taşınmış,
- * bu bileşen yalnızca mantığı ve HTML yapısını içeriyor.
+ * A simple autocomplete dropdown list. The style rules have been moved to GlobalStyle,
+ * and this component only contains the logic and the HTML structure.
  */
 
 import React from 'react';
@@ -13,7 +13,7 @@ interface Props {
 }
 
 export default function SuggestionsDropdown({ suggestions, onSelect }: Props) {
-  // Eğer suggestions boşsa, hiçbir şey göstermiyoruz
+  // If there are no suggestions, show nothing
   if (!suggestions || suggestions.length === 0) return null;
 
   return (

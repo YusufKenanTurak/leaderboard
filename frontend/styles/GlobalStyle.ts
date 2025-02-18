@@ -1,13 +1,13 @@
 /**
  * styles/GlobalStyle.ts
- * Burada yalnızca örnek amaçlı olarak .dropdown ve .dropdown-item
- * class'larını global düzeyde tanımlıyoruz. Uygulamanın her yerinden erişilebilir.
+ * Here, we define the .dropdown and .dropdown-item classes at a global level for demonstration purposes only.
+ * They can be accessed from anywhere in the application.
  */
 
 import { createGlobalStyle } from 'styled-components';
 
 export const GlobalStyle = createGlobalStyle`
-  /* Tüm sayfa için temel ayarlar */
+  /* Basic settings for the entire page */
   body {
     margin: 0;
     padding: 0;
@@ -16,7 +16,7 @@ export const GlobalStyle = createGlobalStyle`
     color: #fff;
   }
 
-  /* SuggestionsDropdown bileşeninin kullandığı global class'lar */
+  /* Global classes used by the SuggestionsDropdown component */
   .dropdown {
     position: absolute;
     top: 42px;
