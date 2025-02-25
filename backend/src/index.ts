@@ -30,6 +30,7 @@ app.use(
 app.use(express.json());
 
 app.get('/', (req, res) => {
+  res.setHeader('bypass-tunnel-reminder', 'true');
   res.send('Leaderboard Backend is running...');
 });
 

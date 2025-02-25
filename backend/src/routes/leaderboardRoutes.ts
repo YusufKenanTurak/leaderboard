@@ -8,7 +8,7 @@ import { asyncHandler } from '../middlewares/asyncHandler';
 import { redis } from '../db';
 import { db } from '../db';
 import { getLeaderboardData, autocompletePlayers } from '../services/leaderboardService';
-// Eğer "isProcessing()" varsa import edin:
+// If "isProcessing()" is present, import it:
 // import { isProcessing } from '../services/leaderboardService';
 
 const router = Router();
@@ -20,9 +20,10 @@ const router = Router();
  * - If init not done or concurrency lock => 503.
  */
 router.get('/leaderboard', asyncHandler(async (req, res) => {
-  // 1) initDone kontrolü
+  res.setHeader('bypass-tunnel-reminder', 'true');
+  // 1) Check initDone
   const initDone = await redis.get('leaderboard:init_done');
-  // 2) concurrency lock kontrolü (opsiyonel)
+  // 2) Check concurrency lock (optional)
   // const locked = isProcessing();
 
   if (!initDone /* || locked */) {
@@ -32,11 +33,11 @@ router.get('/leaderboard', asyncHandler(async (req, res) => {
     });
   }
 
-  // 3) group=1 mi?
+  // 3) Is group=1 ?
   const group = req.query.group === '1';
   if (group) {
-    // "Group by Country" sorgusu => her ülkenin en yüksek paraya sahip ilk 10 oyuncusu
-    // ve bunların ülke içindeki rank(1..10) değeri.
+    // "Group by Country" query => the first 10 players with the highest money in each country
+    // and their rank (1..10) within that country.
     const sql = `
       SELECT sub.id,
              sub.name,
@@ -74,6 +75,7 @@ router.get('/leaderboard', asyncHandler(async (req, res) => {
  * - If init not done => 503
  */
 router.get('/players/autocomplete', asyncHandler(async (req, res) => {
+  res.setHeader('bypass-tunnel-reminder', 'true');
   const initDone = await redis.get('leaderboard:init_done');
   // const locked = isProcessing();
   if (!initDone /* || locked */) {
