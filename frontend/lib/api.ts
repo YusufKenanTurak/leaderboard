@@ -15,7 +15,7 @@ export type Player = {
     id: number;
     name: string;
   };
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://leaderboardprojectapi1.loca.lt/api';
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://leaderboardprojectapi.loca.lt/api';
   const DEFAULT_HEADERS = {
     'bypass-tunnel-reminder': 'true',
     'Content-Type': 'application/json',
