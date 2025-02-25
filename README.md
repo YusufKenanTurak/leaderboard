@@ -200,11 +200,11 @@ The application includes comprehensive tests for both frontend and backend:
 ```bash
 # Backend tests
 cd backend
-npm test
+npm run test
 
 # Frontend tests
 cd frontend
-npm test
+npm run test
 ```
 
 ## License

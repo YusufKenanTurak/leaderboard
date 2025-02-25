@@ -1,5 +1,5 @@
 /**
- * This file is the main entry point of the backend application.
+ * Main entry point for the backend application.
  * It sets up the Express server, loads environment variables, and initiates the leaderboard system.
  */
 
@@ -17,23 +17,26 @@ import './cron/jobs';
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 5000;
+const port: number = Number(process.env.PORT) || 5000;
 
-// Basic middlewares
-app.use(cors());
+app.use(
+  cors({
+    origin: '*',
+    methods: 'GET,POST,PUT,DELETE',
+    allowedHeaders: 'Content-Type,Authorization,bypass-tunnel-reminder',
+  })
+);
+
 app.use(express.json());
 
-// Simple readiness route
 app.get('/', (req, res) => {
   res.setHeader('bypass-tunnel-reminder', 'true');
   res.send('Leaderboard Backend is running...');
 });
 
-// Leaderboard routes
 app.use('/api', leaderboardRoutes);
 
-app.listen(port, () => {
+app.listen(port, '0.0.0.0', () => {
   console.log(`Backend server running on port ${port}`);
-  // Attempt to initialize the leaderboard on startup
   initializeLeaderboard().catch((error) => console.error('[init error]', error));
 });
